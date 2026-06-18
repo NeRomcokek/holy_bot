@@ -6,12 +6,12 @@ const { createCanvas } = require('canvas');
 const { getItemName } = require('./src/utils/textParser');
 
 // ================= НАЛАШТУВАННЯ =================
-const PASSWORD = 'tony0905stark';
+const PASSWORD = 'ТВІЙ_ПАРОЛЬ';
 const START_ACCOUNT = 1;
 const END_ACCOUNT = 200;
 
 const COMPASS_SLOT = 0;           
-const ANARCHY_MODE_SLOT = 15;     
+const ANARCHY_MODE_SLOT = 15;     // Я бачу в логах, що ти клікаєш по 15 слоту!
 const ANARCHY_SERVER_SLOT = 20;   
 const ACCOUNT_TIMEOUT_MS = 180000; 
 // ================================================
@@ -22,7 +22,7 @@ const resultsFile = 'bourgeois_data.json';
 let currentBot = null;
 let resolveCaptcha = null; 
 
-// ГЛОБАЛЬНИЙ СТАН
+// ГЛОБАЛЬНИЙ СТАН (Керує веб-сервером)
 let globalState = { 
     isLocked: false,       
     isImageReady: false    
@@ -30,7 +30,6 @@ let globalState = {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// БЕЗПЕЧНІ ФУНКЦІЇ (Чекають, якщо висить капча)
 async function safeChat(bot, msg) {
     while (globalState.isLocked) await sleep(500);
     bot.chat(msg);
@@ -74,7 +73,6 @@ function getLoreText(item) {
     } catch(e) { return ''; }
 }
 
-// ФУНКЦІЯ КАПЧІ
 function saveRawCaptchaLocal(bot, mapsCache, gState) {
     const frames = Object.values(bot.entities).filter(e => e.name === 'item_frame' || e.name === 'glow_item_frame');
     if (frames.length === 0) {
@@ -128,7 +126,7 @@ app.use(express.urlencoded({ extended: true }));
 app.get('/', (req, res) => {
     if (globalState.isLocked) {
         if (!globalState.isImageReady) {
-            return res.send(`<!DOCTYPE html><html><body style="background:#1e1e1e; color:#f1c40f; font-family:Arial; text-align:center; margin-top:100px;"><h2>⏳ Збираємо мапу капчі з сервера... Зачекайте пару секунд.</h2><script>setTimeout(()=>location.reload(), 1000);</script></body></html>`);
+            return res.send(`<!DOCTYPE html><html><body style="background:#1e1e1e; color:#f1c40f; font-family:Arial; text-align:center; margin-top:100px;"><h2>⏳ Збираємо мапу капчі...</h2><script>setTimeout(()=>location.reload(), 1000);</script></body></html>`);
         }
         return res.send(`
             <!DOCTYPE html><html><head><meta charset="utf-8"><title>КАПЧА!</title>
@@ -184,7 +182,7 @@ function processAccount(username) {
         };
 
         const timeoutId = setTimeout(() => {
-            console.log(`⏰ [ЧАС ВИЙШОВ] Акаунт ${username} завис на 3 хвилини. Примусово йдемо далі.`);
+            console.log(`⏰ [ЧАС ВИЙШОВ] Акаунт завис на 3 хвилини.`);
             finishAccount();
         }, ACCOUNT_TIMEOUT_MS);
 
@@ -193,58 +191,30 @@ function processAccount(username) {
         currentBot = mineflayer.createBot({ host: 'mc.holyworld.ru', port: 25565, username: username, version: false });
         currentBot._client.on('map', (packet) => { if (packet.data) mapsCache[packet.itemDamage] = packet.data; });
 
-        let routineStarted = false;
-        let botState = { authRequested: false, authSuccess: false };
+        // ВНУТРІШНІ СТАНИ БОТА
+        let botState = { 
+            step: 'init', // init -> hub -> anarchy
+            waitingForAnarchy: false 
+        };
 
-        const startRoutine = async () => {
-            if (routineStarted) return;
-            routineStarted = true;
-
+        // --- ДІЯ 1: ПРОХОДЖЕННЯ ХАБУ ---
+        const executeHubRoutine = async () => {
             try {
-                // РОЗУМНА АВТОРИЗАЦІЯ (Чекаємо, доки відпрацює обробник повідомлень з чату)
-                console.log('⏳ Очікуємо перевірку антибота та статус авторизації...');
-                let waited = 0;
-                while (!botState.authSuccess && waited < 20000) {
-                    await sleep(1000);
-                    waited += 1000;
-                    
-                    // Якщо за 8 секунд сервер не попросив пароль - ми вже авторизовані по сесії/IP
-                    if (waited >= 8000 && !botState.authRequested) {
-                        console.log('✅ Пароль не потрібен (вхід по IP / сесії).');
-                        botState.authSuccess = true;
-                        break;
-                    }
-                }
-
-                if (!botState.authSuccess) {
-                    console.log('⚠️ Сервер не підтвердив вхід, але продовжуємо алгоритм про всяк випадок...');
-                } else {
-                    console.log('🔑 Авторизацію успішно пройдено!');
-                }
-                
-                await sleep(2000);
-
-                // МЕНЮ 1 (КОМПАС) З ПОВТОРАМИ
+                botState.step = 'hub';
                 console.log('🧭 [ХАБ] Беремо компас у руку...');
                 currentBot.setQuickBarSlot(COMPASS_SLOT);
-                await sleep(1000); 
+                await sleep(500); 
                 
                 let compassWindow = null;
                 for (let attempt = 1; attempt <= 3; attempt++) {
                     console.log(`👆 Активуємо компас (спроба ${attempt})...`);
                     let waitCompass = expectWindow(currentBot, 5000);
                     currentBot.activateItem();
-                    try {
-                        compassWindow = await waitCompass;
-                        break; // Вікно відкрилося, виходимо з циклу
-                    } catch (e) {
-                        console.log('⚠️ Компас не відкрився, повторюємо...');
-                        await sleep(1000);
-                    }
+                    try { compassWindow = await waitCompass; break; } 
+                    catch (e) { await sleep(1000); }
                 }
-                if (!compassWindow) throw new Error("Не вдалося відкрити компас після 3 спроб");
+                if (!compassWindow) throw new Error("Не вдалося відкрити компас");
                 
-                // МЕНЮ 2 (ВИБІР СЕРВЕРА) З ПОВТОРАМИ
                 const anarchyItem = await waitForSlot(compassWindow, ANARCHY_MODE_SLOT); 
                 await sleep(1000);
                 
@@ -253,41 +223,41 @@ function processAccount(username) {
                     console.log(`👆 [МЕНЮ 1] Клік по слоту ${ANARCHY_MODE_SLOT} (${getItemName(anarchyItem)}) (спроба ${attempt})...`);
                     let waitSub = expectWindow(currentBot, 5000);
                     await safeClick(currentBot, ANARCHY_MODE_SLOT);
-                    try {
-                        subMenuWindow = await waitSub;
-                        break;
-                    } catch (e) {
-                        console.log('⚠️ Вікно підменю не відкрилося, повторюємо...');
-                        await sleep(1000);
-                    }
+                    try { subMenuWindow = await waitSub; break; } 
+                    catch (e) { await sleep(1000); }
                 }
-                if (!subMenuWindow) throw new Error("Не вдалося відкрити підменю вибору сервера");
+                if (!subMenuWindow) throw new Error("Не вдалося відкрити підменю");
                 
-                // ТЕЛЕПОРТАЦІЯ (Після цього кліку вікно не з'являється)
                 const serverItem = await waitForSlot(subMenuWindow, ANARCHY_SERVER_SLOT); 
                 await sleep(1000);
+                
                 console.log(`👆 [МЕНЮ 2] Клік по слоту ${ANARCHY_SERVER_SLOT} (${getItemName(serverItem)})...`);
+                botState.waitingForAnarchy = true; // Кажемо боту, що ми чекаємо переходу на новий сервер!
                 await safeClick(currentBot, ANARCHY_SERVER_SLOT);
                 
-                console.log('🚀 [ТЕЛЕПОРТАЦІЯ] Чекаємо 10 сек завантаження Анархії...');
-                await sleep(10000); 
+                console.log('🚀 [ТЕЛЕПОРТАЦІЯ] Очікуємо підключення до Анархії...');
+            } catch (err) {
+                console.log(`❌ [ПОМИЛКА ХАБУ] ${err.message}`);
+                finishAccount();
+            }
+        };
 
-                // МІСІЇ З ПОВТОРАМИ
+        // --- ДІЯ 2: ЗБІР МІСІЙ НА АНАРХІЇ ---
+        const executeAnarchyRoutine = async () => {
+            try {
+                botState.step = 'anarchy';
+                botState.waitingForAnarchy = false;
+                console.log('📜 [АНАРХІЯ] Запитуємо /missions...');
+                
                 let missionsWindow = null;
                 for (let attempt = 1; attempt <= 3; attempt++) {
-                    console.log(`📜 [АНАРХІЯ] Пишемо /missions (спроба ${attempt})...`);
                     let waitMissions = expectWindow(currentBot, 5000);
                     await safeChat(currentBot, '/missions');
-                    try {
-                        missionsWindow = await waitMissions;
-                        break;
-                    } catch (e) {
-                        await sleep(1000);
-                    }
+                    try { missionsWindow = await waitMissions; break; } 
+                    catch (e) { await sleep(1500); } // Пауза довша, бо команда може залагати
                 }
                 if (!missionsWindow) throw new Error("Не вдалося відкрити /missions");
                 
-                // БУРЖУЙ З ПОВТОРАМИ
                 const missItem = await waitForSlot(missionsWindow, 23); 
                 await sleep(1000);
                 
@@ -296,17 +266,12 @@ function processAccount(username) {
                     console.log(`👆 [МІСІЇ] Клікаємо по слоту 23 (${getItemName(missItem)}) (спроба ${attempt})...`);
                     let waitBourgeois = expectWindow(currentBot, 5000);
                     await safeClick(currentBot, 23);
-                    try {
-                        bourgeoisWindow = await waitBourgeois;
-                        break;
-                    } catch (e) {
-                        console.log('⚠️ Меню Буржуя не відкрилося, повторюємо...');
-                        await sleep(1000);
-                    }
+                    try { bourgeoisWindow = await waitBourgeois; break; } 
+                    catch (e) { await sleep(1000); }
                 }
                 if (!bourgeoisWindow) throw new Error("Не вдалося відкрити Буржуя");
                 
-                console.log('📂 [БУРЖУЙ] Меню Буржуя відкрито. Чекаємо товари...');
+                console.log('📂 [БУРЖУЙ] Меню відкрито. Чекаємо товари...');
                 await waitForSlot(bourgeoisWindow, 20); 
                 await sleep(1500); 
                 
@@ -337,52 +302,65 @@ function processAccount(username) {
 
                 finishAccount(); 
             } catch (err) {
-                console.log(`❌ [ПОМИЛКА] Збій алгоритму: ${err.message}`);
+                console.log(`❌ [ПОМИЛКА АНАРХІЇ] ${err.message}`);
                 finishAccount();
             }
         };
 
-        // --- ВОСЬ ТЕ НАЙВАЖЛИВІШЕ: ТРИГЕРИ СТАРТУ РУТИНИ ---
-        currentBot.on('spawn', () => {
-            startRoutine();
-        });
-
-        currentBot.on('login', () => {
-            console.log('🟢 [СЕРВЕР] З\'єднання встановлено. Очікуємо 10 сек...');
-            // Даємо серверу час відпрацювати антибота. Після цього рутина стартує 100%
-            setTimeout(startRoutine, 10000);
-        });
-
+        // --- ОБРОБНИК ЧАТУ (ЄДИНИЙ МОЗОК БОТА) ---
         currentBot.on('message', async (message) => {
             const cleanMsg = message.toString().replace(/§./g, '');
             if (cleanMsg.trim()) console.log(`[ЧАТ] ${cleanMsg}`); 
             
-            // --- РОЗУМНИЙ ЛОГІН ---
+            // 1. АВТОРИЗАЦІЯ
             if (cleanMsg.match(/login/i) || cleanMsg.includes('Авторизуйтесь')) {
-                botState.authRequested = true;
+                console.log('🔑 Сервер просить пароль...');
                 await safeChat(currentBot, `/login ${PASSWORD}`);
             } else if (cleanMsg.match(/register/i) || cleanMsg.includes('Зарегистрируйтесь')) {
-                botState.authRequested = true;
+                console.log('📝 Сервер просить реєстрацію...');
                 await safeChat(currentBot, `/register ${PASSWORD} ${PASSWORD}`);
-            } else if (cleanMsg.includes('Успешный вход') || cleanMsg.includes('Вы уже в игре') || cleanMsg.includes('Успешная регистрация')) {
-                botState.authSuccess = true;
+            } 
+            
+            // 2. УСПІШНИЙ ВХІД АБО ПРОХОДЖЕННЯ АНТИБОТА (Старт Хабу)
+            else if (cleanMsg.includes('Успешный вход') || cleanMsg.includes('Вы уже в игре') || cleanMsg.includes('Успешная регистрация') || cleanMsg.includes('Проверка пройдена')) {
+                console.log('✅ Вхід дозволено. Даємо 3 сек прогрузитись...');
+                await sleep(3000);
+                if (botState.step === 'init') executeHubRoutine();
             }
 
-            // --- ОБРОБКА КАПЧІ ---
+            // 3. УСПІШНЕ ПІДКЛЮЧЕННЯ ДО АНАРХІЇ
+            else if (cleanMsg.includes('Выполняется подключение...')) {
+                console.log('🌐 Переходимо на новий сервер...');
+            }
+            // Це повідомлення зазвичай з'являється після успішного входу на Анархію
+            else if (botState.waitingForAnarchy && (cleanMsg.includes('Добро пожаловать') || cleanMsg.includes('С возвращением') || cleanMsg.includes('Вы зашли на сервер'))) {
+                 console.log('✅ Успішно зайшли на Анархію! Даємо 5 сек прогрузитись...');
+                 await sleep(5000);
+                 executeAnarchyRoutine();
+            }
+
+            // 4. КАПЧА (Блокуємо все!)
             if (cleanMsg.includes('Введите цифры с картинки') || cleanMsg.includes('неправильно, пожалуйста попробуйте')) {
                 if (!globalState.isLocked) {
                     console.log('⚠️ [СИСТЕМА] Тригер капчі! МИТТЄВО БЛОКУЄМО ДІЇ...');
                     globalState.isLocked = true;
                     globalState.isImageReady = false;
                     
-                    setTimeout(() => {
-                        saveRawCaptchaLocal(currentBot, mapsCache, globalState);
-                    }, 2500);
+                    setTimeout(() => saveRawCaptchaLocal(currentBot, mapsCache, globalState), 2500);
                     
                     if (!resolveCaptcha) {
                         await new Promise(r => resolveCaptcha = r);
                     }
                 }
+            }
+        });
+
+        // Альтернативний тригер для Анархії (якщо повідомлення "Добро пожаловать" немає)
+        currentBot.on('spawn', async () => {
+            if (botState.waitingForAnarchy) {
+                console.log('🌍 Spawn на новому сервері! Чекаємо 5 сек...');
+                await sleep(5000);
+                if (botState.step !== 'anarchy') executeAnarchyRoutine();
             }
         });
 
