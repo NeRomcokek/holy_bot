@@ -6,7 +6,7 @@ const { createCanvas } = require('canvas');
 const { getItemName } = require('./src/utils/textParser');
 
 // ================= НАЛАШТУВАННЯ =================
-const PASSWORD = 'tony0905stark';
+const PASSWORD = 'ТВІЙ_ПАРОЛЬ';
 const START_ACCOUNT = 1;
 const END_ACCOUNT = 200;
 
@@ -201,7 +201,7 @@ function processAccount(username) {
             routineStarted = true;
 
             try {
-                // РОЗУМНА АВТОРИЗАЦІЯ
+                // РОЗУМНА АВТОРИЗАЦІЯ (Чекаємо, доки відпрацює обробник повідомлень з чату)
                 console.log('⏳ Очікуємо перевірку антибота та статус авторизації...');
                 let waited = 0;
                 while (!botState.authSuccess && waited < 20000) {
@@ -209,7 +209,7 @@ function processAccount(username) {
                     waited += 1000;
                     
                     // Якщо за 8 секунд сервер не попросив пароль - ми вже авторизовані по сесії/IP
-                    if (waited === 8000 && !botState.authRequested) {
+                    if (waited >= 8000 && !botState.authRequested) {
                         console.log('✅ Пароль не потрібен (вхід по IP / сесії).');
                         botState.authSuccess = true;
                         break;
@@ -263,7 +263,7 @@ function processAccount(username) {
                 }
                 if (!subMenuWindow) throw new Error("Не вдалося відкрити підменю вибору сервера");
                 
-                // ТЕЛЕПОРТАЦІЯ (Після цього кліку вікно не з'являється, тому expectWindow не потрібен)
+                // ТЕЛЕПОРТАЦІЯ (Після цього кліку вікно не з'являється)
                 const serverItem = await waitForSlot(subMenuWindow, ANARCHY_SERVER_SLOT); 
                 await sleep(1000);
                 console.log(`👆 [МЕНЮ 2] Клік по слоту ${ANARCHY_SERVER_SLOT} (${getItemName(serverItem)})...`);
@@ -308,7 +308,7 @@ function processAccount(username) {
                 
                 console.log('📂 [БУРЖУЙ] Меню Буржуя відкрито. Чекаємо товари...');
                 await waitForSlot(bourgeoisWindow, 20); 
-                await sleep(1500); // Даємо завантажитись усім іншим слотам
+                await sleep(1500); 
                 
                 console.log('🔍 [СИСТЕМА] Парсимо предмети...');
                 const items = bourgeoisWindow.containerItems();
@@ -342,8 +342,15 @@ function processAccount(username) {
             }
         };
 
+        // --- ВОСЬ ТЕ НАЙВАЖЛИВІШЕ: ТРИГЕРИ СТАРТУ РУТИНИ ---
         currentBot.on('spawn', () => {
             startRoutine();
+        });
+
+        currentBot.on('login', () => {
+            console.log('🟢 [СЕРВЕР] З\'єднання встановлено. Очікуємо 10 сек...');
+            // Даємо серверу час відпрацювати антибота. Після цього рутина стартує 100%
+            setTimeout(startRoutine, 10000);
         });
 
         currentBot.on('message', async (message) => {
