@@ -11,8 +11,8 @@ const START_ACCOUNT = 1;
 const END_ACCOUNT = 200;
 
 const COMPASS_SLOT = 0;           
-const ANARCHY_MODE_SLOT = 15;     // Я бачу в логах, що ти клікаєш по 15 слоту!
-const ANARCHY_SERVER_SLOT = 20;   
+const ANARCHY_MODE_SLOT = 15;     // Слот режиму "Анархія"
+const ANARCHY_SERVER_SLOT = 20;   // Слот підсервера Анархії
 const ACCOUNT_TIMEOUT_MS = 180000; 
 // ================================================
 
@@ -22,7 +22,7 @@ const resultsFile = 'bourgeois_data.json';
 let currentBot = null;
 let resolveCaptcha = null; 
 
-// ГЛОБАЛЬНИЙ СТАН (Керує веб-сервером)
+// ГЛОБАЛЬНИЙ СТАН
 let globalState = { 
     isLocked: false,       
     isImageReady: false    
@@ -191,16 +191,17 @@ function processAccount(username) {
         currentBot = mineflayer.createBot({ host: 'mc.holyworld.ru', port: 25565, username: username, version: false });
         currentBot._client.on('map', (packet) => { if (packet.data) mapsCache[packet.itemDamage] = packet.data; });
 
-        // ВНУТРІШНІ СТАНИ БОТА
         let botState = { 
-            step: 'init', // init -> hub -> anarchy
+            step: 'init', 
             waitingForAnarchy: false 
         };
+        let fallbackTimer = null;
 
         // --- ДІЯ 1: ПРОХОДЖЕННЯ ХАБУ ---
         const executeHubRoutine = async () => {
+            if (botState.step !== 'init') return;
+            botState.step = 'hub';
             try {
-                botState.step = 'hub';
                 console.log('🧭 [ХАБ] Беремо компас у руку...');
                 currentBot.setQuickBarSlot(COMPASS_SLOT);
                 await sleep(500); 
@@ -232,7 +233,7 @@ function processAccount(username) {
                 await sleep(1000);
                 
                 console.log(`👆 [МЕНЮ 2] Клік по слоту ${ANARCHY_SERVER_SLOT} (${getItemName(serverItem)})...`);
-                botState.waitingForAnarchy = true; // Кажемо боту, що ми чекаємо переходу на новий сервер!
+                botState.waitingForAnarchy = true; 
                 await safeClick(currentBot, ANARCHY_SERVER_SLOT);
                 
                 console.log('🚀 [ТЕЛЕПОРТАЦІЯ] Очікуємо підключення до Анархії...');
@@ -244,17 +245,17 @@ function processAccount(username) {
 
         // --- ДІЯ 2: ЗБІР МІСІЙ НА АНАРХІЇ ---
         const executeAnarchyRoutine = async () => {
+            if (botState.step === 'anarchy') return;
+            botState.step = 'anarchy';
+            botState.waitingForAnarchy = false;
             try {
-                botState.step = 'anarchy';
-                botState.waitingForAnarchy = false;
                 console.log('📜 [АНАРХІЯ] Запитуємо /missions...');
-                
                 let missionsWindow = null;
                 for (let attempt = 1; attempt <= 3; attempt++) {
                     let waitMissions = expectWindow(currentBot, 5000);
                     await safeChat(currentBot, '/missions');
                     try { missionsWindow = await waitMissions; break; } 
-                    catch (e) { await sleep(1500); } // Пауза довша, бо команда може залагати
+                    catch (e) { await sleep(1500); }
                 }
                 if (!missionsWindow) throw new Error("Не вдалося відкрити /missions");
                 
@@ -307,7 +308,22 @@ function processAccount(username) {
             }
         };
 
-        // --- ОБРОБНИК ЧАТУ (ЄДИНИЙ МОЗОК БОТА) ---
+        // --- ОБРОБНИКИ ПОДІЙ ---
+        currentBot.on('login', () => {
+            console.log('🟢 [СЕРВЕР] З\'єднання встановлено. Чекаємо на повідомлення від сервера...');
+            // РЕЗЕРВНИЙ ТАЙМЕР: Якщо за 12 сек сервер нічого не сказав про авторизацію
+            fallbackTimer = setTimeout(async () => {
+                if (botState.step === 'init' && !globalState.isLocked) {
+                    console.log('⏳ [СИСТЕМА] Сервер мовчить. Пробуємо сліпу авторизацію...');
+                    await safeChat(currentBot, `/register ${PASSWORD} ${PASSWORD}`);
+                    await sleep(1000);
+                    await safeChat(currentBot, `/login ${PASSWORD}`);
+                    await sleep(2000);
+                    executeHubRoutine();
+                }
+            }, 12000);
+        });
+
         currentBot.on('message', async (message) => {
             const cleanMsg = message.toString().replace(/§./g, '');
             if (cleanMsg.trim()) console.log(`[ЧАТ] ${cleanMsg}`); 
@@ -315,34 +331,37 @@ function processAccount(username) {
             // 1. АВТОРИЗАЦІЯ
             if (cleanMsg.match(/login/i) || cleanMsg.includes('Авторизуйтесь')) {
                 console.log('🔑 Сервер просить пароль...');
+                clearTimeout(fallbackTimer);
                 await safeChat(currentBot, `/login ${PASSWORD}`);
             } else if (cleanMsg.match(/register/i) || cleanMsg.includes('Зарегистрируйтесь')) {
                 console.log('📝 Сервер просить реєстрацію...');
+                clearTimeout(fallbackTimer);
                 await safeChat(currentBot, `/register ${PASSWORD} ${PASSWORD}`);
             } 
             
-            // 2. УСПІШНИЙ ВХІД АБО ПРОХОДЖЕННЯ АНТИБОТА (Старт Хабу)
+            // 2. УСПІШНИЙ ВХІД АБО ПРОХОДЖЕННЯ АНТИБОТА
             else if (cleanMsg.includes('Успешный вход') || cleanMsg.includes('Вы уже в игре') || cleanMsg.includes('Успешная регистрация') || cleanMsg.includes('Проверка пройдена')) {
                 console.log('✅ Вхід дозволено. Даємо 3 сек прогрузитись...');
+                clearTimeout(fallbackTimer);
                 await sleep(3000);
-                if (botState.step === 'init') executeHubRoutine();
+                executeHubRoutine();
             }
 
             // 3. УСПІШНЕ ПІДКЛЮЧЕННЯ ДО АНАРХІЇ
             else if (cleanMsg.includes('Выполняется подключение...')) {
                 console.log('🌐 Переходимо на новий сервер...');
             }
-            // Це повідомлення зазвичай з'являється після успішного входу на Анархію
             else if (botState.waitingForAnarchy && (cleanMsg.includes('Добро пожаловать') || cleanMsg.includes('С возвращением') || cleanMsg.includes('Вы зашли на сервер'))) {
                  console.log('✅ Успішно зайшли на Анархію! Даємо 5 сек прогрузитись...');
                  await sleep(5000);
                  executeAnarchyRoutine();
             }
 
-            // 4. КАПЧА (Блокуємо все!)
+            // 4. КАПЧА
             if (cleanMsg.includes('Введите цифры с картинки') || cleanMsg.includes('неправильно, пожалуйста попробуйте')) {
                 if (!globalState.isLocked) {
                     console.log('⚠️ [СИСТЕМА] Тригер капчі! МИТТЄВО БЛОКУЄМО ДІЇ...');
+                    clearTimeout(fallbackTimer); // Вимикаємо сліпий таймер
                     globalState.isLocked = true;
                     globalState.isImageReady = false;
                     
@@ -355,12 +374,12 @@ function processAccount(username) {
             }
         });
 
-        // Альтернативний тригер для Анархії (якщо повідомлення "Добро пожаловать" немає)
+        // Альтернативний тригер: якщо сервер кидає spawn замість повідомлення в чат
         currentBot.on('spawn', async () => {
             if (botState.waitingForAnarchy) {
                 console.log('🌍 Spawn на новому сервері! Чекаємо 5 сек...');
                 await sleep(5000);
-                if (botState.step !== 'anarchy') executeAnarchyRoutine();
+                executeAnarchyRoutine();
             }
         });
 
