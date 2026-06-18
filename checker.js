@@ -192,6 +192,13 @@ function processAccount(username) {
         currentBot = mineflayer.createBot({ host: 'mc.holyworld.ru', port: 25565, username: username, version: false });
         currentBot._client.on('map', (packet) => { if (packet.data) mapsCache[packet.itemDamage] = packet.data; });
 
+        // DEBUG: Відстежуємо всі вікна
+        currentBot.on('windowOpen', (window) => {
+            let title = 'Невідомо';
+            try { title = typeof window.title === 'string' ? window.title : JSON.parse(window.title).text; } catch(e){}
+            console.log(`🪟 [DEBUG] Сервер відкрив вікно: "${title}" (ID: ${window.id})`);
+        });
+
         let botState = { 
             step: 'init', 
             waitingForAnarchy: false 
@@ -250,21 +257,31 @@ function processAccount(username) {
             botState.step = 'anarchy';
             botState.waitingForAnarchy = false;
             try {
-                // ДАЄМО СЕРВЕРУ ЧАС ПОВНІСТЮ ПРОГРУЗИТИ ГРАВЦЯ ПІСЛЯ ТЕЛЕПОРТАЦІЇ
                 console.log('🌍 [АНАРХІЯ] Чекаємо 8 сек після телепортації...');
                 await sleep(8000);
                 
-                // Примусово закриваємо примарні вікна, якщо вони залишились від Хабу
+                // ЗАКРИВАЄМО ПРИМАРНІ ВІКНА
                 if (currentBot.currentWindow) {
+                    console.log('🧹 [АНАРХІЯ] Закриваємо зависле меню з Хабу...');
                     currentBot.closeWindow(currentBot.currentWindow);
                     await sleep(500);
                 }
+
+                // РОБИМО РУХ ДЛЯ АНТИЧИТУ
+                console.log('🚶‍♂️ [АНАРХІЯ] Робимо рух, щоб античит нас розморозив...');
+                currentBot.setControlState('jump', true);
+                await sleep(300);
+                currentBot.setControlState('jump', false);
+                if (currentBot.entity) {
+                    await currentBot.look(currentBot.entity.yaw + 3.14 / 2, 0); // Поворот голови на 90 градусів
+                }
+                await sleep(1500);
 
                 console.log('📜 [АНАРХІЯ] Запитуємо /missions...');
                 let missionsWindow = null;
                 for (let attempt = 1; attempt <= 3; attempt++) {
                     console.log(`📜 Спроба ${attempt}...`);
-                    let waitMissions = expectWindow(currentBot, 8000); // Збільшив час очікування до 8 сек!
+                    let waitMissions = expectWindow(currentBot, 8000);
                     await safeChat(currentBot, '/missions');
                     try { missionsWindow = await waitMissions; break; } 
                     catch (e) { await sleep(2000); }
@@ -324,7 +341,6 @@ function processAccount(username) {
         currentBot.on('login', () => {
             console.log('🟢 [СЕРВЕР] З\'єднання встановлено. Чекаємо на повідомлення від сервера...');
             
-            // НОВИЙ РЕЗЕРВНИЙ ТАЙМЕР: Якщо сервер мовчить 8 секунд, значить ми вже залогінені.
             fallbackTimer = setTimeout(() => {
                 if (botState.step === 'init' && !globalState.isLocked) {
                     console.log('⏳ [СИСТЕМА] Сервер мовчить (вхід по IP). Йдемо до компаса...');
@@ -337,7 +353,6 @@ function processAccount(username) {
             const cleanMsg = message.toString().replace(/§./g, '');
             if (cleanMsg.trim()) console.log(`[ЧАТ] ${cleanMsg}`); 
             
-            // 1. АВТОРИЗАЦІЯ
             if (cleanMsg.match(/login/i) || cleanMsg.includes('Авторизуйтесь')) {
                 console.log('🔑 Сервер просить пароль...');
                 clearTimeout(fallbackTimer);
@@ -348,7 +363,6 @@ function processAccount(username) {
                 await safeChat(currentBot, `/register ${PASSWORD} ${PASSWORD}`);
             } 
             
-            // 2. УСПІШНИЙ ВХІД АБО ПРОХОДЖЕННЯ АНТИБОТА
             else if (cleanMsg.includes('Успешный вход') || cleanMsg.includes('Вы уже в игре') || cleanMsg.includes('Успешная регистрация') || cleanMsg.includes('Проверка пройдена')) {
                 console.log('✅ Вхід дозволено. Даємо 3 сек прогрузитись...');
                 clearTimeout(fallbackTimer);
@@ -356,7 +370,6 @@ function processAccount(username) {
                 if (botState.step === 'init') executeHubRoutine();
             }
 
-            // 3. УСПІШНЕ ПІДКЛЮЧЕННЯ ДО АНАРХІЇ
             else if (cleanMsg.includes('Выполняется подключение...')) {
                 console.log('🌐 Переходимо на новий сервер...');
             }
@@ -365,7 +378,6 @@ function processAccount(username) {
                  executeAnarchyRoutine();
             }
 
-            // 4. КАПЧА
             if (cleanMsg.includes('Введите цифры с картинки') || cleanMsg.includes('неправильно, пожалуйста попробуйте')) {
                 if (!globalState.isLocked) {
                     console.log('⚠️ [СИСТЕМА] Тригер капчі! МИТТЄВО БЛОКУЄМО ДІЇ...');
