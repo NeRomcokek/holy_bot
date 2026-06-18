@@ -20,15 +20,30 @@ const accountsQueue = Array.from({ length: END_ACCOUNT - START_ACCOUNT + 1 }, (_
 const resultsFile = 'bourgeois_data.json';
 
 let currentBot = null;
-let state = { isCaptchaWaiting: false };
 let resolveCaptcha = null; 
+
+// ГЛОБАЛЬНИЙ СТАН (Для блокування дій під час капчі)
+let globalState = { 
+    isLocked: false,       // Блокує всі дії бота
+    isImageReady: false    // Дозволяє сайту показати картинку
+};
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// Функція: Чекаємо відкриття вікна
+// БЕЗПЕЧНІ ФУНКЦІЇ (Ніколи не спрацюють, поки висить капча)
+async function safeChat(bot, msg) {
+    while (globalState.isLocked) await sleep(500);
+    bot.chat(msg);
+}
+
+async function safeClick(bot, slot) {
+    while (globalState.isLocked) await sleep(500);
+    await bot.clickWindow(slot, 0, 0);
+}
+
 function expectWindow(bot, timeout = 15000) {
     return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('Меню не відкрилося вчасно')), timeout);
+        const timer = setTimeout(() => reject(new Error(`Меню не відкрилося вчасно (${timeout/1000} сек)`)), timeout);
         bot.once('windowOpen', (window) => {
             clearTimeout(timer);
             resolve(window);
@@ -36,19 +51,13 @@ function expectWindow(bot, timeout = 15000) {
     });
 }
 
-// НОВА РОЗУМНА ФУНКЦІЯ: Чекаємо появи конкретного предмета в конкретному слоті відкритого меню!
 async function waitForSlot(window, slotNum, timeout = 10000) {
     const start = Date.now();
     while (Date.now() - start < timeout) {
-        // Беремо всі предмети верхнього меню (скрині)
         const items = window.containerItems();
-        // Шукаємо, чи є щось у потрібному нам слоті
         const foundItem = items.find(i => i.slot === slotNum);
-        
-        if (foundItem) {
-            return foundItem; // Предмет з'явився!
-        }
-        await sleep(200); // Чекаємо 200 мілісекунд і перевіряємо знову
+        if (foundItem) return foundItem; 
+        await sleep(200); 
     }
     throw new Error(`Предмет у слоті ${slotNum} так і не завантажився сервером!`);
 }
@@ -70,7 +79,10 @@ const app = express();
 app.use(express.urlencoded({ extended: true }));
 
 app.get('/', (req, res) => {
-    if (state.isCaptchaWaiting) {
+    if (globalState.isLocked) {
+        if (!globalState.isImageReady) {
+            return res.send(`<!DOCTYPE html><html><body style="background:#1e1e1e; color:#f1c40f; font-family:Arial; text-align:center; margin-top:100px;"><h2>⏳ Збираємо мапу капчі з сервера... Зачекайте пару секунд.</h2><script>setTimeout(()=>location.reload(), 1000);</script></body></html>`);
+        }
         return res.send(`
             <!DOCTYPE html><html><head><meta charset="utf-8"><title>КАПЧА!</title>
             <style>body{text-align:center; background:#1e1e1e; color:#fff; font-family:Arial; margin-top:50px;} img{border:3px solid #e74c3c; border-radius:8px;} input{padding:10px; font-size:20px;} button{padding:10px 20px; font-size:20px; background:#2ecc71; border:none; cursor:pointer;}</style></head>
@@ -88,9 +100,10 @@ app.get('/', (req, res) => {
 });
 app.get('/captcha_raw.png', (req, res) => res.sendFile(path.resolve(__dirname, 'captcha_raw.png')));
 app.post('/submit', (req, res) => {
-    if (req.body.code && currentBot && state.isCaptchaWaiting) {
+    if (req.body.code && currentBot && globalState.isLocked) {
         currentBot.chat(req.body.code);
-        state.isCaptchaWaiting = false;
+        globalState.isLocked = false;
+        globalState.isImageReady = false;
         if (resolveCaptcha) resolveCaptcha(); 
     }
     res.redirect('/');
@@ -124,7 +137,7 @@ function processAccount(username) {
         };
 
         const timeoutId = setTimeout(() => {
-            console.log(`⏰ [ЧАС ВИЙШОВ] Акаунт ${username} завис. Примусово йдемо далі.`);
+            console.log(`⏰ [ЧАС ВИЙШОВ] Акаунт ${username} завис на 3 хвилини. Примусово йдемо далі.`);
             finishAccount();
         }, ACCOUNT_TIMEOUT_MS);
 
@@ -140,61 +153,61 @@ function processAccount(username) {
             routineStarted = true;
 
             try {
-                if (state.isCaptchaWaiting) {
-                    console.log('⏳ Очікуємо вирішення капчі через браузер...');
-                    await new Promise(r => {
-                        const check = setInterval(() => { if (!state.isCaptchaWaiting) { clearInterval(check); r(); } }, 500);
-                    });
-                    console.log('✅ Капча вирішена. Продовжуємо...');
-                    await sleep(3000); 
-                }
+                // Якщо капча впала одразу під час старту рутини
+                while (globalState.isLocked) await sleep(500);
 
                 console.log('🔑 [ХАБ] Авторизація/Реєстрація...');
-                currentBot.chat(`/register ${PASSWORD} ${PASSWORD}`);
+                await safeChat(currentBot, `/register ${PASSWORD} ${PASSWORD}`);
                 await sleep(1500);
-                currentBot.chat(`/login ${PASSWORD}`);
-                await sleep(2000);
+                await safeChat(currentBot, `/login ${PASSWORD}`);
+                await sleep(3000); 
 
                 console.log('🧭 [ХАБ] Беремо компас у руку...');
                 currentBot.setQuickBarSlot(COMPASS_SLOT);
-                await sleep(500); 
+                await sleep(1000); 
                 
-                // МЕНЮ 1 (КОМПАС)
                 let waitCompass = expectWindow(currentBot);
                 currentBot.activateItem();
                 const compassWindow = await waitCompass;
-                console.log('📂 [МЕНЮ 1] Компас відкрито. Перевіряємо завантаження предметів...');
-                await waitForSlot(compassWindow, ANARCHY_MODE_SLOT); // <--- РОЗУМНЕ ОЧІКУВАННЯ
-
-                // МЕНЮ 2 (ВИБІР СЕРВЕРА)
+                console.log('📂 [МЕНЮ 1] Компас відкрито. Перевіряємо предмети...');
+                await waitForSlot(compassWindow, ANARCHY_MODE_SLOT); 
+                
+                // ЛЮДСЬКА ПАУЗА: Чекаємо 1 секунду ПІСЛЯ появи предмета, щоб античит повірив нам
+                await sleep(1000);
                 console.log(`👆 [МЕНЮ 1] Клік по слоту ${ANARCHY_MODE_SLOT}...`);
                 let waitSubMenu = expectWindow(currentBot);
-                await currentBot.clickWindow(ANARCHY_MODE_SLOT, 0, 0);
+                await safeClick(currentBot, ANARCHY_MODE_SLOT);
                 const subMenuWindow = await waitSubMenu;
-                console.log('📂 [МЕНЮ 2] Вибір сервера відкрито. Перевіряємо завантаження...');
-                await waitForSlot(subMenuWindow, ANARCHY_SERVER_SLOT); // <--- РОЗУМНЕ ОЧІКУВАННЯ
-
+                
+                console.log('📂 [МЕНЮ 2] Вибір сервера відкрито. Перевіряємо предмети...');
+                await waitForSlot(subMenuWindow, ANARCHY_SERVER_SLOT); 
+                
+                // ЛЮДСЬКА ПАУЗА
+                await sleep(1000);
                 console.log(`👆 [МЕНЮ 2] Клік по слоту ${ANARCHY_SERVER_SLOT}...`);
-                await currentBot.clickWindow(ANARCHY_SERVER_SLOT, 0, 0);
+                await safeClick(currentBot, ANARCHY_SERVER_SLOT);
                 
                 console.log('🚀 [ТЕЛЕПОРТАЦІЯ] Чекаємо 10 сек завантаження Анархії...');
                 await sleep(10000); 
 
-                // МЕНЮ 3 (МІСІЇ)
                 console.log('📜 [АНАРХІЯ] Запитуємо /missions...');
                 let waitMissions = expectWindow(currentBot);
-                currentBot.chat('/missions');
+                await safeChat(currentBot, '/missions');
                 const missionsWindow = await waitMissions;
-                console.log('📂 [МІСІЇ] Меню місій відкрито. Перевіряємо завантаження...');
-                await waitForSlot(missionsWindow, 23); // <--- РОЗУМНЕ ОЧІКУВАННЯ
                 
-                // МЕНЮ 4 (БУРЖУЙ)
+                console.log('📂 [МІСІЇ] Меню місій відкрито. Перевіряємо предмети...');
+                await waitForSlot(missionsWindow, 23); 
+                
+                // ЛЮДСЬКА ПАУЗА
+                await sleep(1000);
                 console.log('👆 [МІСІЇ] Клікаємо по слоту 23 (Буржуй)...');
                 let waitBourgeois = expectWindow(currentBot);
-                await currentBot.clickWindow(23, 0, 0);
+                await safeClick(currentBot, 23);
                 const bourgeoisWindow = await waitBourgeois;
+                
                 console.log('📂 [БУРЖУЙ] Меню Буржуя відкрито. Чекаємо товари...');
-                await waitForSlot(bourgeoisWindow, 20); // Чекаємо хоча б перший товар
+                await waitForSlot(bourgeoisWindow, 20); 
+                await sleep(1000); // Даємо завантажитись усім іншим слотам
                 
                 console.log('🔍 [СИСТЕМА] Парсимо предмети...');
                 const items = bourgeoisWindow.containerItems();
@@ -202,7 +215,7 @@ function processAccount(username) {
 
                 [20, 21, 22, 23, 24].forEach(slotNum => {
                     const item = items.find(i => i.slot === slotNum);
-                    if (!item) return; // Якщо слоту дійсно нема
+                    if (!item) return; 
                     const name = getItemName(item);
                     const lore = getLoreText(item);
                     
@@ -231,8 +244,7 @@ function processAccount(username) {
         });
         
         currentBot.on('login', () => {
-            console.log('🟢 [СЕРВЕР] Підключено. Чекаємо 15 сек, щоб антибот точно пропустив...');
-            // Даємо 15 секунд, бо на другому акаунті ти спіймав перевірку антибота. Краще перечекати!
+            console.log('🟢 [СЕРВЕР] Підключено. Чекаємо 15 сек на антибот...');
             setTimeout(startRoutine, 15000);
         });
 
@@ -240,13 +252,23 @@ function processAccount(username) {
             const cleanMsg = message.toString().replace(/§./g, '');
             if (cleanMsg.trim()) console.log(`[ЧАТ] ${cleanMsg}`); 
             
+            // ЯК ТІЛЬКИ БАЧИМО КАПЧУ - МИТТЄВО БЛОКУЄМО ВСЕ
             if (cleanMsg.includes('Введите цифры с картинки') || cleanMsg.includes('неправильно, пожалуйста попробуйте')) {
-                console.log('⚠️ [СИСТЕМА] Тригер капчі! Збираємо мапу...');
-                state.isCaptchaWaiting = true;
-                setTimeout(() => saveRawCaptcha(currentBot, mapsCache, state), 2500);
-                
-                if (!resolveCaptcha) {
-                    await new Promise(r => resolveCaptcha = r);
+                if (!globalState.isLocked) {
+                    console.log('⚠️ [СИСТЕМА] Тригер капчі! МИТТЄВО БЛОКУЄМО ДІЇ...');
+                    globalState.isLocked = true;
+                    globalState.isImageReady = false;
+                    
+                    // Збираємо мапу з затримкою, бо серверу треба час їх відмалювати в рамках
+                    setTimeout(() => {
+                        saveRawCaptcha(currentBot, mapsCache, globalState);
+                        // Функція saveRawCaptcha повинна змінити globalState.isImageReady на true!
+                        // Ми змінимо це в цьому ж файлі нижче.
+                    }, 2500);
+                    
+                    if (!resolveCaptcha) {
+                        await new Promise(r => resolveCaptcha = r);
+                    }
                 }
             }
         });
@@ -262,4 +284,41 @@ function processAccount(username) {
     });
 }
 
-runWorker();
+// Перевизначаємо функцію saveRawCaptcha локально, щоб вона працювала з новим глобальним станом
+const { createCanvas } = require('canvas');
+function saveRawCaptchaLocal(bot, mapsCache, gState) {
+    const frames = Object.values(bot.entities).filter(e => e.name === 'item_frame' || e.name === 'glow_item_frame');
+    if (frames.length === 0) {
+        setTimeout(() => saveRawCaptchaLocal(bot, mapsCache, gState), 1000);
+        return;
+    }
+    const isWallZ = frames.every(f => f.position.z === frames[0].position.z);
+    frames.sort((a, b) => {
+        if (Math.abs(b.position.y - a.position.y) > 0.5) return b.position.y - a.position.y;
+        if (isWallZ) return b.position.x - a.position.x;
+        else return b.position.z - a.position.z;
+    });
+
+    const canvas = createCanvas(4 * 128, 3 * 128);
+    const ctx = canvas.getContext('2d');
+    
+    // Палітра
+    const mcColors = [[0,0,0],[127,178,56],[247,233,163],[199,199,199],[255,0,0],[160,160,255],[167,167,167],[0,124,0],[255,255,255],[164,168,184],[151,109,77],[112,112,112],[64,64,255],[143,119,72],[255,252,245],[216,127,51],[178,76,216],[102,153,216],[229,229,51],[127,204,25],[242,127,165],[76,76,76],[153,153,153],[76,127,153],[127,63,178],[51,76,178],[102,76,51],[102,127,51],[153,51,51],[25,25,25],[250,238,77],[92,219,213],[74,128,255],[0,217,58],[129,86,49],[112,2,0],[209,177,161],[159,82,36],[149,87,108],[112,108,138],[186,133,36],[103,117,53],[160,77,78],[57,41,35],[135,107,98],[87,92,92],[122,73,88],[76,62,92],[76,50,35],[76,82,42],[142,60,46],[37,22,16]];
+    const shades = [180, 220, 255, 135];
+    function getMapColor(index) {
+        if (index === 0) return [0, 0, 0];
+        return [
+            Math.floor((mcColors[Math.floor(index/4)]||[0,0,0])[0]*(shades[index%4]||255)/255), 
+            Math.floor((mcColors[Math.floor(index/4)]||[0,0,0])[1]*(shades[index%4]||255)/255), 
+            Math.floor((mcColors[Math.floor(index/4)]||[0,0,0])[2]*(shades[index%4]||255)/255)
+        ];
+    }
+
+    let i = 0;
+    for (const frame of frames) {
+        let mapId = null;
+        try { if (frame.metadata[9] && frame.metadata[9].components) mapId = frame.metadata[9].components.find(c => c.type === 'map_id').data; } catch (e) {}
+        if (mapId === null || !mapsCache[mapId]) { i++; continue; }
+        const mapData = mapsCache[mapId];
+        const imgData = ctx.createImageData(128, 128);
+        for (let p = 0; p < map
