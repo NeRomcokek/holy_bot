@@ -10,10 +10,10 @@ const PASSWORD = 'ТВІЙ_ПАРОЛЬ';
 const START_ACCOUNT = 1;
 const END_ACCOUNT = 200;
 
-const COMPASS_SLOT = 0;           // Слот компаса (0-8)
-const ANARCHY_MODE_SLOT = 13;     // Клік у компасі для Анархії
-const ANARCHY_SERVER_SLOT = 20;   // Клік у підменю для вибору сервера
-const ACCOUNT_TIMEOUT_MS = 180000; // 3 хвилини максимум на акаунт
+const COMPASS_SLOT = 0;           
+const ANARCHY_MODE_SLOT = 13;     
+const ANARCHY_SERVER_SLOT = 20;   
+const ACCOUNT_TIMEOUT_MS = 180000; 
 // ================================================
 
 const accountsQueue = Array.from({ length: END_ACCOUNT - START_ACCOUNT + 1 }, (_, i) => `Romcokek${START_ACCOUNT + i}`);
@@ -25,14 +25,32 @@ let resolveCaptcha = null;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// Функція: Чекаємо відкриття вікна
 function expectWindow(bot, timeout = 15000) {
     return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('Меню не відкрилося вчасно (тайм-аут 15 сек)')), timeout);
+        const timer = setTimeout(() => reject(new Error('Меню не відкрилося вчасно')), timeout);
         bot.once('windowOpen', (window) => {
             clearTimeout(timer);
             resolve(window);
         });
     });
+}
+
+// НОВА РОЗУМНА ФУНКЦІЯ: Чекаємо появи конкретного предмета в конкретному слоті відкритого меню!
+async function waitForSlot(window, slotNum, timeout = 10000) {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+        // Беремо всі предмети верхнього меню (скрині)
+        const items = window.containerItems();
+        // Шукаємо, чи є щось у потрібному нам слоті
+        const foundItem = items.find(i => i.slot === slotNum);
+        
+        if (foundItem) {
+            return foundItem; // Предмет з'явився!
+        }
+        await sleep(200); // Чекаємо 200 мілісекунд і перевіряємо знову
+    }
+    throw new Error(`Предмет у слоті ${slotNum} так і не завантажився сервером!`);
 }
 
 function getLoreText(item) {
@@ -135,24 +153,26 @@ function processAccount(username) {
                 currentBot.chat(`/register ${PASSWORD} ${PASSWORD}`);
                 await sleep(1500);
                 currentBot.chat(`/login ${PASSWORD}`);
-                await sleep(3000); // Даємо час серверу обробити логін
+                await sleep(2000);
 
                 console.log('🧭 [ХАБ] Беремо компас у руку...');
                 currentBot.setQuickBarSlot(COMPASS_SLOT);
-                await sleep(1000); // Даємо час на зміну активного слота
+                await sleep(500); 
                 
+                // МЕНЮ 1 (КОМПАС)
                 let waitCompass = expectWindow(currentBot);
                 currentBot.activateItem();
-                await waitCompass;
-                console.log('📂 [МЕНЮ 1] Компас відкрито. Чекаємо прогрузку предметів (2 сек)...');
-                await sleep(2000); // СУПЕР ВАЖЛИВО: чекаємо, поки сервер пришле предмети в меню
+                const compassWindow = await waitCompass;
+                console.log('📂 [МЕНЮ 1] Компас відкрито. Перевіряємо завантаження предметів...');
+                await waitForSlot(compassWindow, ANARCHY_MODE_SLOT); // <--- РОЗУМНЕ ОЧІКУВАННЯ
 
+                // МЕНЮ 2 (ВИБІР СЕРВЕРА)
                 console.log(`👆 [МЕНЮ 1] Клік по слоту ${ANARCHY_MODE_SLOT}...`);
                 let waitSubMenu = expectWindow(currentBot);
                 await currentBot.clickWindow(ANARCHY_MODE_SLOT, 0, 0);
-                await waitSubMenu;
-                console.log('📂 [МЕНЮ 2] Вибір сервера відкрито. Чекаємо прогрузку (2 сек)...');
-                await sleep(2000);
+                const subMenuWindow = await waitSubMenu;
+                console.log('📂 [МЕНЮ 2] Вибір сервера відкрито. Перевіряємо завантаження...');
+                await waitForSlot(subMenuWindow, ANARCHY_SERVER_SLOT); // <--- РОЗУМНЕ ОЧІКУВАННЯ
 
                 console.log(`👆 [МЕНЮ 2] Клік по слоту ${ANARCHY_SERVER_SLOT}...`);
                 await currentBot.clickWindow(ANARCHY_SERVER_SLOT, 0, 0);
@@ -160,20 +180,21 @@ function processAccount(username) {
                 console.log('🚀 [ТЕЛЕПОРТАЦІЯ] Чекаємо 10 сек завантаження Анархії...');
                 await sleep(10000); 
 
+                // МЕНЮ 3 (МІСІЇ)
                 console.log('📜 [АНАРХІЯ] Запитуємо /missions...');
                 let waitMissions = expectWindow(currentBot);
                 currentBot.chat('/missions');
-                await waitMissions;
-                console.log('📂 [МІСІЇ] Меню місій відкрито. Чекаємо прогрузку (2 сек)...');
-                await sleep(2000);
+                const missionsWindow = await waitMissions;
+                console.log('📂 [МІСІЇ] Меню місій відкрито. Перевіряємо завантаження...');
+                await waitForSlot(missionsWindow, 23); // <--- РОЗУМНЕ ОЧІКУВАННЯ
                 
+                // МЕНЮ 4 (БУРЖУЙ)
                 console.log('👆 [МІСІЇ] Клікаємо по слоту 23 (Буржуй)...');
                 let waitBourgeois = expectWindow(currentBot);
                 await currentBot.clickWindow(23, 0, 0);
                 const bourgeoisWindow = await waitBourgeois;
-                
-                console.log('📂 [БУРЖУЙ] Меню Буржуя відкрито! Чекаємо прогрузку товарів (2.5 сек)...');
-                await sleep(2500); 
+                console.log('📂 [БУРЖУЙ] Меню Буржуя відкрито. Чекаємо товари...');
+                await waitForSlot(bourgeoisWindow, 20); // Чекаємо хоча б перший товар
                 
                 console.log('🔍 [СИСТЕМА] Парсимо предмети...');
                 const items = bourgeoisWindow.containerItems();
@@ -181,6 +202,7 @@ function processAccount(username) {
 
                 [20, 21, 22, 23, 24].forEach(slotNum => {
                     const item = items.find(i => i.slot === slotNum);
+                    if (!item) return; // Якщо слоту дійсно нема
                     const name = getItemName(item);
                     const lore = getLoreText(item);
                     
@@ -205,14 +227,13 @@ function processAccount(username) {
         };
 
         currentBot.on('spawn', () => {
-            // На Анархії spawn може спрацювати повторно, тому routineStarted захищає від дублів
             startRoutine();
         });
         
         currentBot.on('login', () => {
-            console.log('🟢 [СЕРВЕР] Підключено. Запуск таймера (12 сек на антибот)...');
-            // Збільшили час до 12 секунд, щоб антибот "Ожидайте проверки" точно встиг пройти!
-            setTimeout(startRoutine, 12000);
+            console.log('🟢 [СЕРВЕР] Підключено. Чекаємо 15 сек, щоб антибот точно пропустив...');
+            // Даємо 15 секунд, бо на другому акаунті ти спіймав перевірку антибота. Краще перечекати!
+            setTimeout(startRoutine, 15000);
         });
 
         currentBot.on('message', async (message) => {
