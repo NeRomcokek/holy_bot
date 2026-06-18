@@ -22,7 +22,6 @@ const resultsFile = 'bourgeois_data.json';
 let currentBot = null;
 let resolveCaptcha = null; 
 
-// ГЛОБАЛЬНИЙ СТАН
 let globalState = { 
     isLocked: false,       
     isImageReady: false    
@@ -192,16 +191,16 @@ function processAccount(username) {
         currentBot = mineflayer.createBot({ host: 'mc.holyworld.ru', port: 25565, username: username, version: false });
         currentBot._client.on('map', (packet) => { if (packet.data) mapsCache[packet.itemDamage] = packet.data; });
 
-        // DEBUG: Відстежуємо всі вікна
-        currentBot.on('windowOpen', (window) => {
-            let title = 'Невідомо';
-            try { title = typeof window.title === 'string' ? window.title : JSON.parse(window.title).text; } catch(e){}
-            console.log(`🪟 [DEBUG] Сервер відкрив вікно: "${title}" (ID: ${window.id})`);
+        // ВАЖЛИВО: Автоматичне прийняття ресурс-паку!
+        currentBot.on('resourcePack', () => {
+            console.log('📦 [СИСТЕМА] Сервер надіслав ресурс-пак! Автоматично приймаємо...');
+            currentBot.acceptResourcePack();
         });
 
         let botState = { 
             step: 'init', 
-            waitingForAnarchy: false 
+            waitingForAnarchy: false,
+            anarchyReady: false
         };
         let fallbackTimer = null;
 
@@ -257,31 +256,39 @@ function processAccount(username) {
             botState.step = 'anarchy';
             botState.waitingForAnarchy = false;
             try {
-                console.log('🌍 [АНАРХІЯ] Чекаємо 8 сек після телепортації...');
-                await sleep(8000);
+                // РОБИМО РУХ ДЛЯ АНТИЧИТУ, ЩОБ ВІН НАС РОЗМОРОЗИВ
+                console.log('🚶‍♂️ [АНАРХІЯ] Робимо розминку для античиту (Sneak + SwingArm)...');
+                currentBot.setControlState('sneak', true);
+                currentBot.swingArm();
+                await sleep(500);
+                currentBot.setControlState('sneak', false);
+                await sleep(1000);
+
+                // ЧЕКАЄМО НА ВІТАЛЬНЕ ПОВІДОМЛЕННЯ (Або чекаємо макс 12 сек)
+                console.log('⏳ [АНАРХІЯ] Чекаємо вітальне повідомлення від сервера...');
+                let waited = 0;
+                while (!botState.anarchyReady && waited < 12000) {
+                    await sleep(1000);
+                    waited += 1000;
+                }
+                if (!botState.anarchyReady) {
+                    console.log('⚠️ [АНАРХІЯ] Вітання не надійшло, але пробуємо йти далі...');
+                } else {
+                    console.log('✅ [АНАРХІЯ] Сервер підтвердив наше завантаження!');
+                }
                 
-                // ЗАКРИВАЄМО ПРИМАРНІ ВІКНА
+                // Примусово закриваємо примарні вікна
                 if (currentBot.currentWindow) {
-                    console.log('🧹 [АНАРХІЯ] Закриваємо зависле меню з Хабу...');
                     currentBot.closeWindow(currentBot.currentWindow);
                     await sleep(500);
                 }
-
-                // РОБИМО РУХ ДЛЯ АНТИЧИТУ
-                console.log('🚶‍♂️ [АНАРХІЯ] Робимо рух, щоб античит нас розморозив...');
-                currentBot.setControlState('jump', true);
-                await sleep(300);
-                currentBot.setControlState('jump', false);
-                if (currentBot.entity) {
-                    await currentBot.look(currentBot.entity.yaw + 3.14 / 2, 0); // Поворот голови на 90 градусів
-                }
-                await sleep(1500);
 
                 console.log('📜 [АНАРХІЯ] Запитуємо /missions...');
                 let missionsWindow = null;
                 for (let attempt = 1; attempt <= 3; attempt++) {
                     console.log(`📜 Спроба ${attempt}...`);
                     let waitMissions = expectWindow(currentBot, 8000);
+                    currentBot.swingArm(); // Ще раз махаємо рукою перед командою!
                     await safeChat(currentBot, '/missions');
                     try { missionsWindow = await waitMissions; break; } 
                     catch (e) { await sleep(2000); }
@@ -340,7 +347,6 @@ function processAccount(username) {
         // --- ОБРОБНИКИ ПОДІЙ ---
         currentBot.on('login', () => {
             console.log('🟢 [СЕРВЕР] З\'єднання встановлено. Чекаємо на повідомлення від сервера...');
-            
             fallbackTimer = setTimeout(() => {
                 if (botState.step === 'init' && !globalState.isLocked) {
                     console.log('⏳ [СИСТЕМА] Сервер мовчить (вхід по IP). Йдемо до компаса...');
@@ -349,8 +355,8 @@ function processAccount(username) {
             }, 8000);
         });
 
-        currentBot.on('message', async (message) => {
-            const cleanMsg = message.toString().replace(/§./g, '');
+        // ВИКОРИСТОВУЄМО messagestr ДЛЯ КРАЩОГО ПЕРЕХОПЛЕННЯ СИСТЕМНИХ ПОВІДОМЛЕНЬ
+        currentBot.on('messagestr', async (cleanMsg, messagePosition, jsonMsg) => {
             if (cleanMsg.trim()) console.log(`[ЧАТ] ${cleanMsg}`); 
             
             if (cleanMsg.match(/login/i) || cleanMsg.includes('Авторизуйтесь')) {
@@ -373,9 +379,10 @@ function processAccount(username) {
             else if (cleanMsg.includes('Выполняется подключение...')) {
                 console.log('🌐 Переходимо на новий сервер...');
             }
-            else if (botState.waitingForAnarchy && (cleanMsg.includes('Добро пожаловать') || cleanMsg.includes('С возвращением') || cleanMsg.includes('Вы зашли на сервер'))) {
-                 console.log('✅ Успішно зайшли на Анархію!');
-                 executeAnarchyRoutine();
+            
+            // ЛОВИМО ВІТАЛЬНЕ ПОВІДОМЛЕННЯ АНАРХІЇ!
+            if (cleanMsg.includes('рады вновь тебя видеть') || cleanMsg.includes('У Буржуя обновился') || cleanMsg.includes('До события')) {
+                botState.anarchyReady = true;
             }
 
             if (cleanMsg.includes('Введите цифры с картинки') || cleanMsg.includes('неправильно, пожалуйста попробуйте')) {
