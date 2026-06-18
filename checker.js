@@ -6,7 +6,7 @@ const { createCanvas } = require('canvas');
 const { getItemName } = require('./src/utils/textParser');
 
 // ================= НАЛАШТУВАННЯ =================
-const PASSWORD = 'tony0905stark';
+const PASSWORD = 'ТВІЙ_ПАРОЛЬ';
 const START_ACCOUNT = 1;
 const END_ACCOUNT = 200;
 
