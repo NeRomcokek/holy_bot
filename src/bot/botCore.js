@@ -1,13 +1,13 @@
 const mineflayer = require('mineflayer');
 const { saveRawCaptcha } = require('./captcha');
 
-function initBot(state) {
+function initBot(state, botName) {
     const mapsCache = {};
     
     const bot = mineflayer.createBot({ 
-        host: 'mc.holyworld.ru', 
+        host: 'mc.holyworld.me', 
         port: 25565, 
-        username: 'Romcokek1', 
+        username: botName,
         version: false 
     });
 
