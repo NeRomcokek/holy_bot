@@ -6,7 +6,7 @@ const { createCanvas } = require('canvas');
 const { getItemName } = require('./src/utils/textParser');
 
 // ================= НАЛАШТУВАННЯ =================
-const PASSWORD = 'ТВІЙ_ПАРОЛЬ';
+const PASSWORD = 'tony0905stark';
 const START_ACCOUNT = 1;
 const END_ACCOUNT = 200;
 
@@ -40,7 +40,7 @@ async function safeClick(bot, slot) {
     await bot.clickWindow(slot, 0, 0);
 }
 
-function expectWindow(bot, timeout = 5000) {
+function expectWindow(bot, timeout = 8000) {
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error(`Тайм-аут вікна`)), timeout);
         bot.once('windowOpen', (window) => {
@@ -177,6 +177,7 @@ function processAccount(username) {
             if (isDone) return;
             isDone = true;
             clearTimeout(timeoutId);
+            clearTimeout(fallbackTimer);
             if (currentBot) currentBot.quit();
             resolveNextAccount();
         };
@@ -249,13 +250,24 @@ function processAccount(username) {
             botState.step = 'anarchy';
             botState.waitingForAnarchy = false;
             try {
+                // ДАЄМО СЕРВЕРУ ЧАС ПОВНІСТЮ ПРОГРУЗИТИ ГРАВЦЯ ПІСЛЯ ТЕЛЕПОРТАЦІЇ
+                console.log('🌍 [АНАРХІЯ] Чекаємо 8 сек після телепортації...');
+                await sleep(8000);
+                
+                // Примусово закриваємо примарні вікна, якщо вони залишились від Хабу
+                if (currentBot.currentWindow) {
+                    currentBot.closeWindow(currentBot.currentWindow);
+                    await sleep(500);
+                }
+
                 console.log('📜 [АНАРХІЯ] Запитуємо /missions...');
                 let missionsWindow = null;
                 for (let attempt = 1; attempt <= 3; attempt++) {
-                    let waitMissions = expectWindow(currentBot, 5000);
+                    console.log(`📜 Спроба ${attempt}...`);
+                    let waitMissions = expectWindow(currentBot, 8000); // Збільшив час очікування до 8 сек!
                     await safeChat(currentBot, '/missions');
                     try { missionsWindow = await waitMissions; break; } 
-                    catch (e) { await sleep(1500); }
+                    catch (e) { await sleep(2000); }
                 }
                 if (!missionsWindow) throw new Error("Не вдалося відкрити /missions");
                 
@@ -265,7 +277,7 @@ function processAccount(username) {
                 let bourgeoisWindow = null;
                 for (let attempt = 1; attempt <= 3; attempt++) {
                     console.log(`👆 [МІСІЇ] Клікаємо по слоту 23 (${getItemName(missItem)}) (спроба ${attempt})...`);
-                    let waitBourgeois = expectWindow(currentBot, 5000);
+                    let waitBourgeois = expectWindow(currentBot, 8000);
                     await safeClick(currentBot, 23);
                     try { bourgeoisWindow = await waitBourgeois; break; } 
                     catch (e) { await sleep(1000); }
@@ -311,17 +323,14 @@ function processAccount(username) {
         // --- ОБРОБНИКИ ПОДІЙ ---
         currentBot.on('login', () => {
             console.log('🟢 [СЕРВЕР] З\'єднання встановлено. Чекаємо на повідомлення від сервера...');
-            // РЕЗЕРВНИЙ ТАЙМЕР: Якщо за 12 сек сервер нічого не сказав про авторизацію
-            fallbackTimer = setTimeout(async () => {
+            
+            // НОВИЙ РЕЗЕРВНИЙ ТАЙМЕР: Якщо сервер мовчить 8 секунд, значить ми вже залогінені.
+            fallbackTimer = setTimeout(() => {
                 if (botState.step === 'init' && !globalState.isLocked) {
-                    console.log('⏳ [СИСТЕМА] Сервер мовчить. Пробуємо сліпу авторизацію...');
-                    await safeChat(currentBot, `/register ${PASSWORD} ${PASSWORD}`);
-                    await sleep(1000);
-                    await safeChat(currentBot, `/login ${PASSWORD}`);
-                    await sleep(2000);
+                    console.log('⏳ [СИСТЕМА] Сервер мовчить (вхід по IP). Йдемо до компаса...');
                     executeHubRoutine();
                 }
-            }, 12000);
+            }, 8000);
         });
 
         currentBot.on('message', async (message) => {
@@ -344,7 +353,7 @@ function processAccount(username) {
                 console.log('✅ Вхід дозволено. Даємо 3 сек прогрузитись...');
                 clearTimeout(fallbackTimer);
                 await sleep(3000);
-                executeHubRoutine();
+                if (botState.step === 'init') executeHubRoutine();
             }
 
             // 3. УСПІШНЕ ПІДКЛЮЧЕННЯ ДО АНАРХІЇ
@@ -352,8 +361,7 @@ function processAccount(username) {
                 console.log('🌐 Переходимо на новий сервер...');
             }
             else if (botState.waitingForAnarchy && (cleanMsg.includes('Добро пожаловать') || cleanMsg.includes('С возвращением') || cleanMsg.includes('Вы зашли на сервер'))) {
-                 console.log('✅ Успішно зайшли на Анархію! Даємо 5 сек прогрузитись...');
-                 await sleep(5000);
+                 console.log('✅ Успішно зайшли на Анархію!');
                  executeAnarchyRoutine();
             }
 
@@ -361,7 +369,7 @@ function processAccount(username) {
             if (cleanMsg.includes('Введите цифры с картинки') || cleanMsg.includes('неправильно, пожалуйста попробуйте')) {
                 if (!globalState.isLocked) {
                     console.log('⚠️ [СИСТЕМА] Тригер капчі! МИТТЄВО БЛОКУЄМО ДІЇ...');
-                    clearTimeout(fallbackTimer); // Вимикаємо сліпий таймер
+                    clearTimeout(fallbackTimer); 
                     globalState.isLocked = true;
                     globalState.isImageReady = false;
                     
@@ -374,11 +382,9 @@ function processAccount(username) {
             }
         });
 
-        // Альтернативний тригер: якщо сервер кидає spawn замість повідомлення в чат
         currentBot.on('spawn', async () => {
             if (botState.waitingForAnarchy) {
-                console.log('🌍 Spawn на новому сервері! Чекаємо 5 сек...');
-                await sleep(5000);
+                console.log('🌍 Spawn на новому сервері!');
                 executeAnarchyRoutine();
             }
         });
