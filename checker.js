@@ -11,8 +11,8 @@ const START_ACCOUNT = 1;
 const END_ACCOUNT = 200;
 
 const COMPASS_SLOT = 0;           
-const ANARCHY_MODE_SLOT = 15;     // Слот режиму "Анархія"
-const ANARCHY_SERVER_SLOT = 20;   // Слот підсервера Анархії
+const ANARCHY_MODE_SLOT = 15;     
+const ANARCHY_SERVER_SLOT = 20;   
 const ACCOUNT_TIMEOUT_MS = 180000; 
 // ================================================
 
@@ -191,12 +191,6 @@ function processAccount(username) {
         currentBot = mineflayer.createBot({ host: 'mc.holyworld.ru', port: 25565, username: username, version: false });
         currentBot._client.on('map', (packet) => { if (packet.data) mapsCache[packet.itemDamage] = packet.data; });
 
-        // ВАЖЛИВО: Автоматичне прийняття ресурс-паку!
-        currentBot.on('resourcePack', () => {
-            console.log('📦 [СИСТЕМА] Сервер надіслав ресурс-пак! Автоматично приймаємо...');
-            currentBot.acceptResourcePack();
-        });
-
         let botState = { 
             step: 'init', 
             waitingForAnarchy: false,
@@ -256,28 +250,15 @@ function processAccount(username) {
             botState.step = 'anarchy';
             botState.waitingForAnarchy = false;
             try {
-                // РОБИМО РУХ ДЛЯ АНТИЧИТУ, ЩОБ ВІН НАС РОЗМОРОЗИВ
-                console.log('🚶‍♂️ [АНАРХІЯ] Робимо розминку для античиту (Sneak + SwingArm)...');
-                currentBot.setControlState('sneak', true);
-                currentBot.swingArm();
-                await sleep(500);
-                currentBot.setControlState('sneak', false);
-                await sleep(1000);
-
-                // ЧЕКАЄМО НА ВІТАЛЬНЕ ПОВІДОМЛЕННЯ (Або чекаємо макс 12 сек)
-                console.log('⏳ [АНАРХІЯ] Чекаємо вітальне повідомлення від сервера...');
+                // ПРОСТО ЧЕКАЄМО (без рухів), поки сервер не кине вітальне повідомлення або не мине 8 секунд
+                console.log('⏳ [АНАРХІЯ] Чекаємо прогрузки сервера...');
                 let waited = 0;
-                while (!botState.anarchyReady && waited < 12000) {
+                while (!botState.anarchyReady && waited < 8000) {
                     await sleep(1000);
                     waited += 1000;
                 }
-                if (!botState.anarchyReady) {
-                    console.log('⚠️ [АНАРХІЯ] Вітання не надійшло, але пробуємо йти далі...');
-                } else {
-                    console.log('✅ [АНАРХІЯ] Сервер підтвердив наше завантаження!');
-                }
                 
-                // Примусово закриваємо примарні вікна
+                // Примусово скидаємо пам'ять Mineflayer про відкриті вікна з Хабу
                 if (currentBot.currentWindow) {
                     currentBot.closeWindow(currentBot.currentWindow);
                     await sleep(500);
@@ -288,7 +269,6 @@ function processAccount(username) {
                 for (let attempt = 1; attempt <= 3; attempt++) {
                     console.log(`📜 Спроба ${attempt}...`);
                     let waitMissions = expectWindow(currentBot, 8000);
-                    currentBot.swingArm(); // Ще раз махаємо рукою перед командою!
                     await safeChat(currentBot, '/missions');
                     try { missionsWindow = await waitMissions; break; } 
                     catch (e) { await sleep(2000); }
@@ -355,7 +335,7 @@ function processAccount(username) {
             }, 8000);
         });
 
-        // ВИКОРИСТОВУЄМО messagestr ДЛЯ КРАЩОГО ПЕРЕХОПЛЕННЯ СИСТЕМНИХ ПОВІДОМЛЕНЬ
+        // Використовуємо messagestr, щоб не втрачати форматування тексту (як на твоєму скріншоті)
         currentBot.on('messagestr', async (cleanMsg, messagePosition, jsonMsg) => {
             if (cleanMsg.trim()) console.log(`[ЧАТ] ${cleanMsg}`); 
             
@@ -380,7 +360,7 @@ function processAccount(username) {
                 console.log('🌐 Переходимо на новий сервер...');
             }
             
-            // ЛОВИМО ВІТАЛЬНЕ ПОВІДОМЛЕННЯ АНАРХІЇ!
+            // Ловимо вітальне повідомлення!
             if (cleanMsg.includes('рады вновь тебя видеть') || cleanMsg.includes('У Буржуя обновился') || cleanMsg.includes('До события')) {
                 botState.anarchyReady = true;
             }
