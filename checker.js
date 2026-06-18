@@ -11,7 +11,7 @@ const START_ACCOUNT = 1;
 const END_ACCOUNT = 200;
 
 const COMPASS_SLOT = 0;           
-const ANARCHY_MODE_SLOT = 13;     
+const ANARCHY_MODE_SLOT = 15;     
 const ANARCHY_SERVER_SLOT = 20;   
 const ACCOUNT_TIMEOUT_MS = 180000; 
 // ================================================
