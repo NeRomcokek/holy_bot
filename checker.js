@@ -96,8 +96,14 @@ function processAccount(username) {
             if (isDone) return;
             isDone = true;
             clearTimeout(captchaTimeout);
-            bot.quit();
-            resolve();
+            if (bot) {
+                if (typeof bot.quit === 'function') {
+                    bot.quit();
+                } else if (typeof bot.end === 'function') {
+                    bot.end();
+                }
+            }
+            resolve();            
         };
 
         // Ловимо дані мапи
