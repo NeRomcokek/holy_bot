@@ -6,7 +6,7 @@ const { createCanvas } = require('canvas');
 const PASSWORD = 'ТВІЙ_ПАРОЛЬ';
 const START_ACCOUNT = 1;
 const END_ACCOUNT = 200;
-const SERVER_HOST = 'example-server.com'; // Заміни на потрібний IP
+const SERVER_HOST = 'mc.holyworld.me'; // Заміни на потрібний IP
 const WAIT_FOR_CAPTCHA_MS = 15000; // Скільки чекати на капчу після входу (15 сек)
 
 // Створюємо папку для капч, якщо її немає
