@@ -5,9 +5,9 @@ const readline = require('readline');
 const dbc = require('deathbycaptcha-lib'); // Підключаємо бібліотеку
 
 // ================= НАЛАШТУВАННЯ =================
-const USERNAME = 'ТВІЙ_ЛОГІН_DBC';
-const PASSWORD = 'ТВІЙ_ПАРОЛЬ_DBC';
-const FOLDER_PATH = './captcha_tests'; // Шлях до папки з картинками
+const USERNAME = 'Romcokek';
+const PASSWORD = 'Tony0905stark.';
+const FOLDER_PATH = './captchas'; // Шлях до папки з картинками
 // ================================================
 
 // Ініціалізуємо HTTP-клієнта з документації
