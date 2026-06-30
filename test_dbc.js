@@ -13,8 +13,7 @@ const FOLDER_PATH = path.resolve(__dirname, './captchas');
 // Ініціалізуємо клієнт Gemini
 const genAI = new GoogleGenerativeAI(API_KEY);
 // Використовуємо 1.5 Flash - вона безкоштовна, швидка і чудово бачить картинки
-const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-
+const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
