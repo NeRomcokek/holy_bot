@@ -5,10 +5,10 @@ const readline = require('readline');
 const HttpClient = require('./endcaptcha.js'); // Підключаємо їхню локальну бібліотеку
 
 // ================= НАЛАШТУВАННЯ =================
-const USERNAME = 'ТВІЙ_ЛОГІН_ENDCAPTCHA';
-const PASSWORD = 'ТВІЙ_ПАРОЛЬ_ENDCAPTCHA';
+const USERNAME = 'Romcokek';
+const PASSWORD = 'tony0905stark';
 // Робимо шлях абсолютним, щоб уникнути проблем з пошуком папки
-const FOLDER_PATH = path.resolve(__dirname, './captcha_tests'); 
+const FOLDER_PATH = path.resolve(__dirname, './captchas'); 
 // ================================================
 
 const client = new HttpClient(USERNAME, PASSWORD);
