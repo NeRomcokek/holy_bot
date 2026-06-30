@@ -2,7 +2,6 @@ const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
 const readline = require('readline');
-const Jimp = require('jimp'); 
 const HttpClient = require('./endcaptcha.js'); // Підключаємо їхню локальну бібліотеку
 
 // ================= НАЛАШТУВАННЯ =================
