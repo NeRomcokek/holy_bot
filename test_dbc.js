@@ -5,9 +5,10 @@ const readline = require('readline');
 const HttpClient = require('./endcaptcha.js'); // Підключаємо їхню локальну бібліотеку
 
 // ================= НАЛАШТУВАННЯ =================
-const USERNAME = 'Romcokek';
-const PASSWORD = 'tony0905stark';
-const FOLDER_PATH = './captchas';
+const USERNAME = 'ТВІЙ_ЛОГІН_ENDCAPTCHA';
+const PASSWORD = 'ТВІЙ_ПАРОЛЬ_ENDCAPTCHA';
+// Робимо шлях абсолютним, щоб уникнути проблем з пошуком папки
+const FOLDER_PATH = path.resolve(__dirname, './captcha_tests'); 
 // ================================================
 
 const client = new HttpClient(USERNAME, PASSWORD);
@@ -16,14 +17,13 @@ const rl = readline.createInterface({
     output: process.stdout
 });
 
-
-
 async function processCaptchas() {
-    // 1. Перевіряємо баланс через їхню бібліотеку
+    // 1. Перевіряємо баланс 
     await new Promise(resolve => {
         let balanceReq = client.get_balance();
         balanceReq.on('response', (res) => {
-            console.log(`Баланс акаунта: ${res}`);
+            // Витягуємо значення з об'єкта
+            console.log(`Баланс акаунта: ${res.balance || JSON.stringify(res)}`);
             resolve();
         });
     });
@@ -42,30 +42,26 @@ async function processCaptchas() {
         return;
     }
 
-    const tmpPath = path.join(FOLDER_PATH, 'tmp_with_instruction.png');
-
     for (const file of files) {
-        if (file === 'tmp_with_instruction.png') continue; 
-        
         const originalFilePath = path.join(FOLDER_PATH, file);
         console.log(`\n--- Обробка: ${file} ---`);
         
-        // Виводимо картинку в термінал через chafa
-        exec(`chafa "${tmpPath}"`, (error, stdout) => {
+        // Виводимо оригінальну картинку в термінал через chafa
+        exec(`chafa "${originalFilePath}"`, (error, stdout) => {
             if (!error) console.log(stdout);
         });
         
         console.log('Відправка на сервер EndCaptcha. Чекаємо на людину...');
         
-        // 2. Відправляємо через метод decode, який сам опитує сервер
+        // 2. Відправляємо оригінальний файл напряму через ReadStream
         await new Promise((resolve) => {
-            let captchaReq = client.decode(tmpPath);
+            let captchaReq = client.decode(fs.createReadStream(originalFilePath));
             
             captchaReq.on('response', (res) => {
                 if (res && res.text) {
                     console.log(`>>> РЕЗУЛЬТАТ РОЗПІЗНАВАННЯ: ${res.text} <<<`);
                     
-                    // Якщо ввели фігню — відправляємо репорт для повернення коштів
+                    // Залишаємо авто-репорт, якщо працівник ввів букви замість цифр або менше/більше 4 символів
                     if (res.text.length !== 4 || !/^\d{4}$/.test(res.text)) {
                         console.log('Поганий результат, надсилаємо репорт...');
                         client.report(res.captcha_id);
@@ -81,7 +77,6 @@ async function processCaptchas() {
         });
     }
     
-    if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
     rl.close();
     console.log('Тестування завершено!');
 }
