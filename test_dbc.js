@@ -10,16 +10,18 @@ const API_KEY = process.env.GEMINI_API_KEY;
 const FOLDER_PATH = path.resolve(__dirname, './captchas');
 // ================================================
 
-// Ініціалізуємо клієнт Gemini
 const genAI = new GoogleGenerativeAI(API_KEY);
-// Використовуємо 1.5 Flash - вона безкоштовна, швидка і чудово бачить картинки
-const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+// Перемикаємось на найрозумнішу PRO-модель
+const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+
 const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
 });
 
-// Функція для підготовки картинки у формат, який розуміє Gemini
+// Функція для створення паузи
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 function fileToGenerativePart(filePath, mimeType) {
     return {
         inlineData: {
@@ -46,47 +48,56 @@ async function processCaptchas() {
 
     console.log(`Знайдено картинок для тесту: ${files.length}\n`);
 
-    // Це наша "інструкція" для ШІ. Чим вона точніша, тим краще він ігнорує лінії.
+    // Новий хитрий промпт: змушуємо ШІ "думати вголос"
     const prompt = `
-        Це графічна капча. На ній зображено рівно 4 цифри.
-        Ці цифри перекреслені лініями (шумом), які можуть співпадати за кольором з цифрами.
-        Твоя задача: проігнорувати всі лінії на фоні і розпізнати тільки 4 цифри.
-        У відповіді напиши ТІЛЬКИ 4 цифри. Жодних букв, жодних пробілів, крапок чи інших пояснень.
+        Ти експерт з комп'ютерного зору. Перед тобою графічна капча.
+        На ній зображено рівно 4 цифри, але вони сильно перекреслені лініями (шумом), які часто співпадають за кольором з самими цифрами.
+        Щоб не помилитися, застосуй такий підхід:
+        1. Спочатку уважно подивись на зображення і коротко опиши свої міркування (наприклад: "Бачу на фоні сітки червоні цифри. Перша цифра має округлу форму, схожа на 9...").
+        2. Тільки після міркувань, з нового рядка напиши фінальну відповідь СУВОРО у такому форматі: 
+        ВІДПОВІДЬ: 1234
     `;
 
     for (const file of files) {
         const originalFilePath = path.join(FOLDER_PATH, file);
         console.log(`\n--- Обробка: ${file} ---`);
         
-        // Виводимо картинку в термінал через chafa
         exec(`chafa "${originalFilePath}"`, (error, stdout) => {
             if (!error) console.log(stdout);
         });
         
-        console.log('Gemini дивиться на картинку...');
+        console.log('Gemini 1.5 Pro аналізує картинку (це може зайняти 5-10 секунд)...');
         
-        try {
-            // Визначаємо MIME-тип на основі розширення (PNG або JPEG)
-            const ext = path.extname(file).toLowerCase();
-            const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
-            
-            // Готуємо картинку
-            const imagePart = fileToGenerativePart(originalFilePath, mimeType);
+        const ext = path.extname(file).toLowerCase();
+        const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
+        const imagePart = fileToGenerativePart(originalFilePath, mimeType);
 
-            // Відправляємо картинку + текст до Gemini
-            const result = await model.generateContent([prompt, imagePart]);
-            const response = await result.response;
-            const text = response.text().trim(); // Отримуємо текст і відрізаємо зайві пробіли/переноси
-            
-            console.log(`>>> РЕЗУЛЬТАТ РОЗПІЗНАВАННЯ: ${text} <<<`);
-            
-        } catch (error) {
-            console.error('Помилка Gemini:', error.message);
+        let success = false;
+        
+        // Цикл спроб для обходу помилки 429
+        while (!success) {
+            try {
+                const result = await model.generateContent([prompt, imagePart]);
+                const response = await result.response;
+                const text = response.text().trim();
+                
+                console.log(`\n[Міркування ШІ та результат]:\n${text}\n`);
+                success = true; // Якщо помилки немає, йдемо далі
+                
+            } catch (error) {
+                // Якщо зловили ліміт - просто чекаємо і повторюємо
+                if (error.message.includes('429') || error.message.includes('Quota')) {
+                    console.log('⏳ Досягнуто ліміту запитів (API відпочиває). Чекаємо 20 секунд...');
+                    await delay(20000); 
+                } else {
+                    console.error('Невідома помилка Gemini:', error.message);
+                    success = true; // Пропускаємо картинку, якщо помилка критична
+                }
+            }
         }
         
-        // Чекаємо команди для переходу до наступної
         await new Promise(resolve => {
-            rl.question('\nНатисни Enter для наступної картинки...', () => resolve());
+            rl.question('Натисни Enter для наступної картинки...', () => resolve());
         });
     }
     
