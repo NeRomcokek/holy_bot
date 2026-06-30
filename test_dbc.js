@@ -12,7 +12,7 @@ const FOLDER_PATH = path.resolve(__dirname, './captchas');
 
 const genAI = new GoogleGenerativeAI(API_KEY);
 // Перемикаємось на найрозумнішу PRO-модель
-const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
 const rl = readline.createInterface({
     input: process.stdin,
@@ -60,6 +60,8 @@ async function processCaptchas() {
 
     for (const file of files) {
         const originalFilePath = path.join(FOLDER_PATH, file);
+        console.log('Чекаю 4 секунди перед відправкою, щоб не отримати бан...');
+        await delay(4000);
         console.log(`\n--- Обробка: ${file} ---`);
         
         exec(`chafa "${originalFilePath}"`, (error, stdout) => {
