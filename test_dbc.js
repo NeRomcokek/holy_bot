@@ -2,27 +2,29 @@ const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
 const readline = require('readline');
-const dbc = require('deathbycaptcha-lib'); // Підключаємо бібліотеку
+const Jimp = require('jimp'); 
+const HttpClient = require('./endcaptcha.js'); // Підключаємо їхню локальну бібліотеку
 
 // ================= НАЛАШТУВАННЯ =================
 const USERNAME = 'Romcokek';
-const PASSWORD = 'Tony0905stark.';
-const FOLDER_PATH = './captchas'; // Шлях до папки з картинками
+const PASSWORD = 'tony0905stark';
+const FOLDER_PATH = './captchas';
 // ================================================
 
-// Ініціалізуємо HTTP-клієнта з документації
-const client = new dbc.HttpClient(USERNAME, PASSWORD);
-
+const client = new HttpClient(USERNAME, PASSWORD);
 const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
 });
 
+
+
 async function processCaptchas() {
-    // Перевіряємо баланс перед початком
+    // 1. Перевіряємо баланс через їхню бібліотеку
     await new Promise(resolve => {
-        client.get_balance((balance) => {
-            console.log(`Баланс акаунта: ${balance} центів`);
+        let balanceReq = client.get_balance();
+        balanceReq.on('response', (res) => {
+            console.log(`Баланс акаунта: ${res}`);
             resolve();
         });
     });
@@ -41,40 +43,46 @@ async function processCaptchas() {
         return;
     }
 
-    console.log(`Знайдено картинок для тесту: ${files.length}\n`);
+    const tmpPath = path.join(FOLDER_PATH, 'tmp_with_instruction.png');
 
     for (const file of files) {
-        const filePath = path.join(FOLDER_PATH, file);
-        console.log(`--- Обробка: ${file} ---`);
+        if (file === 'tmp_with_instruction.png') continue; 
         
-        // Відкриваємо картинку через стандартний переглядач Ubuntu
-        exec(`chafa "${filePath}"`, (error, stdout) => {
-            if (error) {
-                console.error(`Помилка chafa: ${error.message}`);
-                return;
-            }
-            console.log(stdout); // Вимальовує картинку в консолі
+        const originalFilePath = path.join(FOLDER_PATH, file);
+        console.log(`\n--- Обробка: ${file} ---`);
+        
+        // Виводимо картинку в термінал через chafa
+        exec(`chafa "${tmpPath}"`, (error, stdout) => {
+            if (!error) console.log(stdout);
         });
         
-        console.log('Відправка на сервер. Чекаємо на людину...');
+        console.log('Відправка на сервер EndCaptcha. Чекаємо на людину...');
         
-        // Відправляємо завдання
+        // 2. Відправляємо через метод decode, який сам опитує сервер
         await new Promise((resolve) => {
-            client.decode({captcha: filePath}, (captcha) => {
-                if (captcha) {
-                    // Якщо капча розв'язана, виводимо її текст
-                    console.log(`>>> РЕЗУЛЬТАТ РОЗПІЗНАВАННЯ: ${captcha['text']} <<<`);
+            let captchaReq = client.decode(tmpPath);
+            
+            captchaReq.on('response', (res) => {
+                if (res && res.text) {
+                    console.log(`>>> РЕЗУЛЬТАТ РОЗПІЗНАВАННЯ: ${res.text} <<<`);
+                    
+                    // Якщо ввели фігню — відправляємо репорт для повернення коштів
+                    if (res.text.length !== 4 || !/^\d{4}$/.test(res.text)) {
+                        console.log('Поганий результат, надсилаємо репорт...');
+                        client.report(res.captcha_id);
+                    }
                 } else {
-                    console.log('Помилка розпізнавання або таймаут.');
+                    console.log(`Помилка або таймаут:`, res);
                 }
                 
-                rl.question('\nНатисни Enter, щоб закрити перегляд і перейти до наступної картинки...', () => {
+                rl.question('\nНатисни Enter для наступної картинки...', () => {
                     resolve();
                 });
             });
         });
     }
     
+    if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
     rl.close();
     console.log('Тестування завершено!');
 }
